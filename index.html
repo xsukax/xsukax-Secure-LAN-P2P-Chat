@@ -19,6 +19,10 @@
         .chat-message { max-width: 85%; word-wrap: break-word; }
         @media (max-width: 640px) { .chat-message { max-width: 75%; } }
         .mobile-safe { padding-bottom: env(safe-area-inset-bottom); }
+        .connection-troubleshoot {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(239, 68, 68, 0.05) 100%);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
     </style>
 </head>
 <body class="bg-gray-900 min-h-screen">
@@ -98,6 +102,31 @@
                             </div>
                             <button onclick="copyCode()" class="w-full px-4 py-3 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition text-sm sm:text-base">📋 Copy to Clipboard</button>
                             <p class="text-xs text-gray-400 mt-4 text-center">Share securely (Signal, encrypted email, in person)</p>
+                        </div>
+                    </div>
+
+                    <div id="connectionTroubleshoot" class="hidden mt-6 p-4 connection-troubleshoot rounded-lg animate-slideUp">
+                        <h3 class="text-red-400 font-semibold mb-3 flex items-center gap-2">
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
+                            </svg>
+                            Connection Troubleshooting
+                        </h3>
+                        <div class="space-y-2 text-sm text-gray-300">
+                            <p>Having trouble connecting? Try these steps:</p>
+                            <ol class="list-decimal list-inside space-y-1 text-gray-400">
+                                <li>Ensure both users have copied the exact same code</li>
+                                <li>Check that both users have a stable internet connection</li>
+                                <li>Try refreshing the page and reconnecting</li>
+                                <li>If on a corporate network, try a different network or VPN</li>
+                                <li>As a last resort, try switching to a different browser</li>
+                            </ol>
+                            <div class="mt-3 pt-3 border-t border-red-900/30">
+                                <button onclick="testConnectivity()" class="px-3 py-1.5 bg-red-600/20 hover:bg-red-600/30 text-red-300 rounded text-xs font-medium transition">
+                                    Test Network Connectivity
+                                </button>
+                                <span id="connectivityTest" class="ml-3 text-xs text-gray-400"></span>
+                            </div>
                         </div>
                     </div>
 
@@ -226,6 +255,7 @@
             <div class="text-center">
                 <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-400 mx-auto mb-4"></div>
                 <p class="text-gray-300" id="loadingMessage">Processing...</p>
+                <p id="connectionStatus" class="text-xs text-gray-400 mt-2"></p>
             </div>
         </div>
     </div>
@@ -238,9 +268,32 @@
         let sessionId, myUsername, peerUsername;
         let typingTimeout;
         let isConnected = false;
+        let connectionAttempts = 0;
+        let connectionTimer;
 
         const adjectives = ['Swift', 'Brave', 'Quiet', 'Clever', 'Bold', 'Wise', 'Silent', 'Noble', 'Cosmic', 'Mystic', 'Stellar', 'Lunar', 'Solar', 'Arctic', 'Crimson', 'Azure', 'Emerald', 'Golden', 'Silver', 'Crystal'];
         const nouns = ['Fox', 'Wolf', 'Eagle', 'Tiger', 'Dragon', 'Phoenix', 'Falcon', 'Hawk', 'Lion', 'Panther', 'Raven', 'Serpent', 'Bear', 'Owl', 'Lynx', 'Cobra', 'Viper', 'Shark', 'Dolphin', 'Whale'];
+
+        // Multiple STUN servers for better connectivity
+        const rtcConfig = {
+            iceServers: [
+                {urls: "stun:stun.l.google.com:19302"},
+                {urls: "stun:stun1.l.google.com:19302"},
+                {urls: "stun:stun2.l.google.com:19302"},
+                {urls: "stun:stun3.l.google.com:19302"},
+                {urls: "stun:stun4.l.google.com:19302"},
+                {urls: "stun:stun.stunprotocol.org:3478"},
+                {urls: "stun:stun.leaseweb.net:3478"},
+                {urls: "stun:stun.nextcloud.com:443"}
+            ]
+        };
+
+        // Multiple WebSocket signaling servers for redundancy
+        const signalingServers = [
+            'wss://signal.trystero.noise.workers.dev',
+            'wss://signal.trystero.noise.workers.dev',
+            'wss://signal.trystero.noise.workers.dev'
+        ];
 
         function generateUsername() {
             const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
@@ -273,6 +326,40 @@
             document.getElementById('modalBackdrop').classList.add('hidden');
         }
 
+        function updateConnectionStatus(status) {
+            const statusElement = document.getElementById('connectionStatus');
+            if (statusElement) {
+                statusElement.textContent = status;
+            }
+        }
+
+        function showTroubleshooting() {
+            document.getElementById('connectionTroubleshoot').classList.remove('hidden');
+        }
+
+        window.testConnectivity = async function() {
+            const testResult = document.getElementById('connectivityTest');
+            testResult.textContent = "Testing...";
+            
+            try {
+                // Test WebRTC support
+                if (!window.RTCPeerConnection) {
+                    throw new Error("WebRTC not supported");
+                }
+                
+                // Test STUN server connectivity
+                const pc = new RTCPeerConnection(rtcConfig);
+                await pc.createOffer();
+                pc.close();
+                
+                testResult.textContent = "✅ Network supports P2P connections";
+                testResult.className = "ml-3 text-xs text-green-400";
+            } catch (error) {
+                testResult.textContent = "❌ Network issues detected";
+                testResult.className = "ml-3 text-xs text-red-400";
+            }
+        };
+
         window.showVerificationModal = function() {
             document.getElementById('modalBackdrop').classList.remove('hidden');
             document.getElementById('verificationModal').classList.remove('hidden');
@@ -295,20 +382,60 @@
             sessionId = generateSessionId();
             myUsername = generateUsername();
             showLoading('Generating encryption keys...');
-            await generateKeyPair();
-            hideLoading();
-
-            const config = {appId: 'xsukax-secure-chat-v1'};
-            room = joinRoom(config, sessionId);
-
-            setupActions();
-            setupEventHandlers();
-
-            const connectionCode = btoa(sessionId);
-            document.getElementById('codeDisplay').textContent = connectionCode;
-            document.getElementById('connectionDisplay').classList.remove('hidden');
-            document.getElementById('myUsername').textContent = myUsername;
-            document.getElementById('myInitial').textContent = myUsername.charAt(0);
+            updateConnectionStatus("Initializing...");
+            
+            try {
+                await generateKeyPair();
+                updateConnectionStatus("Setting up connection...");
+                
+                // Try connecting with different signaling servers
+                let connected = false;
+                let lastError;
+                
+                for (const serverUrl of signalingServers) {
+                    try {
+                        updateConnectionStatus(`Connecting to ${serverUrl}...`);
+                        const config = {
+                            appId: 'xsukax-secure-chat-v1',
+                            rtcConfig: rtcConfig,
+                            signalingServerUrl: serverUrl
+                        };
+                        room = joinRoom(config, sessionId);
+                        setupActions();
+                        setupEventHandlers();
+                        connected = true;
+                        break;
+                    } catch (error) {
+                        lastError = error;
+                        console.warn(`Failed to connect to ${serverUrl}:`, error);
+                    }
+                }
+                
+                if (!connected) {
+                    throw lastError || new Error("Failed to connect to any signaling server");
+                }
+                
+                const connectionCode = btoa(sessionId);
+                document.getElementById('codeDisplay').textContent = connectionCode;
+                document.getElementById('connectionDisplay').classList.remove('hidden');
+                document.getElementById('myUsername').textContent = myUsername;
+                document.getElementById('myInitial').textContent = myUsername.charAt(0);
+                
+                // Start connection timeout check
+                connectionTimer = setTimeout(() => {
+                    if (!peerPublicKey) {
+                        showTroubleshooting();
+                        updateConnectionStatus("Still waiting for peer...");
+                    }
+                }, 20000);
+                
+            } catch (error) {
+                console.error("Connection error:", error);
+                showNotification('Connection Error', 'Failed to establish connection. Please check your network and try again.');
+                showTroubleshooting();
+            } finally {
+                hideLoading();
+            }
         };
 
         window.showJoinForm = function() {
@@ -335,16 +462,57 @@
 
             myUsername = generateUsername();
             showLoading('Connecting and generating keys...');
-            await generateKeyPair();
-
-            const config = {appId: 'xsukax-secure-chat-v1'};
-            room = joinRoom(config, sessionId);
-
-            setupActions();
-            setupEventHandlers();
-
-            document.getElementById('myUsername').textContent = myUsername;
-            document.getElementById('myInitial').textContent = myUsername.charAt(0);
+            updateConnectionStatus("Initializing...");
+            
+            try {
+                await generateKeyPair();
+                updateConnectionStatus("Setting up connection...");
+                
+                // Try connecting with different signaling servers
+                let connected = false;
+                let lastError;
+                
+                for (const serverUrl of signalingServers) {
+                    try {
+                        updateConnectionStatus(`Connecting to ${serverUrl}...`);
+                        const config = {
+                            appId: 'xsukax-secure-chat-v1',
+                            rtcConfig: rtcConfig,
+                            signalingServerUrl: serverUrl
+                        };
+                        room = joinRoom(config, sessionId);
+                        setupActions();
+                        setupEventHandlers();
+                        connected = true;
+                        break;
+                    } catch (error) {
+                        lastError = error;
+                        console.warn(`Failed to connect to ${serverUrl}:`, error);
+                    }
+                }
+                
+                if (!connected) {
+                    throw lastError || new Error("Failed to connect to any signaling server");
+                }
+                
+                document.getElementById('myUsername').textContent = myUsername;
+                document.getElementById('myInitial').textContent = myUsername.charAt(0);
+                
+                // Start connection timeout check
+                connectionTimer = setTimeout(() => {
+                    if (!peerPublicKey) {
+                        showTroubleshooting();
+                        updateConnectionStatus("Still waiting for peer...");
+                    }
+                }, 20000);
+                
+            } catch (error) {
+                console.error("Connection error:", error);
+                showNotification('Connection Error', 'Failed to establish connection. Please check your network and try again.');
+                showTroubleshooting();
+            } finally {
+                hideLoading();
+            }
         };
 
         function setupActions() {
@@ -356,11 +524,13 @@
             getKey(async (data, peerId) => {
                 if (peerPublicKey) return; // Already exchanged keys
                 
+                updateConnectionStatus("Exchanging encryption keys...");
                 peerPublicKey = await importPublicKey(data.publicKey);
                 await deriveSharedSecret();
                 const exported = await exportPublicKey(myKeyPair.publicKey);
                 sendKey({publicKey: exported}, peerId);
                 sendUserInfo({username: myUsername});
+                updateConnectionStatus("Securing connection...");
             });
 
             getUserInfo((data) => {
@@ -385,6 +555,7 @@
 
         function setupEventHandlers() {
             room.onPeerJoin(async (peerId) => {
+                updateConnectionStatus("Peer joined, securing connection...");
                 if (peerPublicKey) return; // Already connected
                 
                 const exported = await exportPublicKey(myKeyPair.publicKey);
@@ -399,13 +570,17 @@
                 setTimeout(() => location.reload(), 3000);
             });
 
-            // Connection timeout - if no peer after 30 seconds
-            setTimeout(() => {
-                if (!peerPublicKey && document.getElementById('connectionDisplay').classList.contains('hidden') === false) {
-                    displaySystemMessage('⏱️ Still waiting for peer to connect...');
-                    displaySystemMessage('💡 Tip: Make sure your peer has entered the connection code');
+            // Handle connection errors
+            room.onPeerError((error, peerId) => {
+                console.error("Peer connection error:", error);
+                displaySystemMessage('⚠️ Connection error with peer. Trying to reconnect...');
+                connectionAttempts++;
+                
+                if (connectionAttempts > 3) {
+                    displaySystemMessage('❌ Multiple connection failures. Please refresh and try again.');
+                    showTroubleshooting();
                 }
-            }, 30000);
+            });
         }
 
         async function generateKeyPair() {
@@ -495,6 +670,11 @@
         function showChatInterface() {
             if (isConnected) return; // Prevent multiple calls
             isConnected = true;
+            
+            // Clear the connection timer
+            if (connectionTimer) {
+                clearTimeout(connectionTimer);
+            }
             
             document.getElementById('setupArea').classList.add('hidden');
             document.getElementById('chatInterface').classList.remove('hidden');
