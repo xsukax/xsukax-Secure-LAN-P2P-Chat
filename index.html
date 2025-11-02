@@ -108,11 +108,11 @@
                                 <strong class="text-white">Privacy First:</strong>
                                 <ul class="mt-2 space-y-1 text-gray-400">
                                     <li>• ECDH + AES-256-GCM encryption</li>
-                                    <li>• Direct P2P (no servers)</li>
+                                    <li>• Direct P2P via BitTorrent trackers</li>
                                     <li>• Messages never stored</li>
-                                    <li>• Works on IPFS</li>
+                                    <li>• Works across different networks globally</li>
                                 </ul>
-                                <p class="mt-2 text-xs text-gray-500">Note: Works best on open networks. Some corporate/restricted networks may block P2P connections.</p>
+                                <p class="mt-2 text-xs text-gray-500">Connection time: 5-15 seconds for peer discovery. Works best on open networks (home WiFi, mobile data).</p>
                             </div>
                         </div>
                     </div>
@@ -298,7 +298,10 @@
             await generateKeyPair();
             hideLoading();
 
-            const config = {appId: 'xsukax-secure-chat-v1'};
+            const config = {
+                appId: 'xsukax-secure-chat-v1',
+                relayUrls: null // Disable Nostr, use only BitTorrent
+            };
             room = joinRoom(config, sessionId);
 
             setupActions();
@@ -337,7 +340,10 @@
             showLoading('Connecting and generating keys...');
             await generateKeyPair();
 
-            const config = {appId: 'xsukax-secure-chat-v1'};
+            const config = {
+                appId: 'xsukax-secure-chat-v1',
+                relayUrls: null // Disable Nostr, use only BitTorrent
+            };
             room = joinRoom(config, sessionId);
 
             setupActions();
@@ -387,6 +393,7 @@
             room.onPeerJoin(async (peerId) => {
                 if (peerPublicKey) return; // Already connected
                 
+                console.log('Peer joined, initiating key exchange...');
                 const exported = await exportPublicKey(myKeyPair.publicKey);
                 setTimeout(() => {
                     sendKey({publicKey: exported}, peerId);
@@ -399,11 +406,24 @@
                 setTimeout(() => location.reload(), 3000);
             });
 
-            // Connection timeout - if no peer after 30 seconds
+            // Connection status updates
             setTimeout(() => {
-                if (!peerPublicKey && document.getElementById('connectionDisplay').classList.contains('hidden') === false) {
-                    displaySystemMessage('⏱️ Still waiting for peer to connect...');
-                    displaySystemMessage('💡 Tip: Make sure your peer has entered the connection code');
+                if (!peerPublicKey) {
+                    displaySystemMessage('🔍 Discovering peer via BitTorrent trackers...');
+                }
+            }, 5000);
+
+            setTimeout(() => {
+                if (!peerPublicKey && document.getElementById('connectionDisplay') && !document.getElementById('connectionDisplay').classList.contains('hidden')) {
+                    displaySystemMessage('⏱️ Still searching for peer...');
+                    displaySystemMessage('💡 Ensure both users have entered the connection code');
+                }
+            }, 15000);
+
+            setTimeout(() => {
+                if (!peerPublicKey && document.getElementById('connectionDisplay') && !document.getElementById('connectionDisplay').classList.contains('hidden')) {
+                    displaySystemMessage('⚠️ Connection taking longer than usual');
+                    displaySystemMessage('💡 Both peers should be on open networks (avoid corporate/restricted WiFi)');
                 }
             }, 30000);
         }
@@ -524,6 +544,18 @@
             }
         };
 
+        function autoScrollChat() {
+            const chatArea = document.getElementById('chatArea');
+            if (chatArea) {
+                setTimeout(() => {
+                    chatArea.scrollTo({
+                        top: chatArea.scrollHeight,
+                        behavior: 'smooth'
+                    });
+                }, 100);
+            }
+        }
+
         function displayMessage(username, text, isOwn) {
             const chatArea = document.getElementById('chatArea');
             const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
@@ -538,7 +570,7 @@
                 </div>
             `;
             chatArea.appendChild(messageDiv);
-            chatArea.scrollTop = chatArea.scrollHeight;
+            autoScrollChat();
         }
 
         function displaySystemMessage(text) {
@@ -551,7 +583,7 @@
                 </div>
             `;
             chatArea.appendChild(messageDiv);
-            chatArea.scrollTop = chatArea.scrollHeight;
+            autoScrollChat();
         }
 
         window.copyCode = function() {
