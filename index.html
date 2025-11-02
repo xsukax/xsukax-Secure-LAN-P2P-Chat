@@ -15,11 +15,14 @@
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         .animate-slideUp { animation: slideUp 0.3s ease-out; }
         .animate-fadeIn { animation: fadeIn 0.3s ease-out; }
-        .chat-message { max-width: 85%; word-wrap: break-word; }
+        .chat-message { max-width: 85%; word-wrap: break-word; position: relative; }
         @media (max-width: 640px) { .chat-message { max-width: 75%; } }
         .mobile-safe { padding-bottom: env(safe-area-inset-bottom); }
         .progress-bar { transition: width 0.3s ease; }
         .media-preview { max-width: 100%; max-height: 300px; border-radius: 8px; }
+        .message-actions { opacity: 0; transition: opacity 0.2s; }
+        .message-wrapper:hover .message-actions { opacity: 1; }
+        .message-edited { font-style: italic; opacity: 0.8; }
     </style>
 </head>
 <body class="bg-gray-900 min-h-screen">
@@ -111,7 +114,7 @@
                                     <li>• ECDH + AES-256-GCM encryption</li>
                                     <li>• Direct P2P on local network</li>
                                     <li>• Encrypted file transfers (up to 1GB)</li>
-                                    <li>• Nothing stored or logged</li>
+                                    <li>• Session persists on refresh</li>
                                 </ul>
                                 <p class="mt-2 text-xs text-gray-500">Note: Both devices must be on the same local network.</p>
                             </div>
@@ -121,9 +124,9 @@
             </div>
 
             <!-- Chat Interface -->
-            <div id="chatInterface" class="hidden flex-1 flex flex-col">
+            <div id="chatInterface" class="hidden flex-1 flex flex-col min-h-0">
                 <!-- User Info Banner -->
-                <div class="bg-gray-800 border-b border-gray-700 px-4 py-3">
+                <div class="bg-gray-800 border-b border-gray-700 px-4 py-3 flex-shrink-0">
                     <div class="flex items-center justify-between text-xs sm:text-sm">
                         <div class="flex items-center gap-2 min-w-0">
                             <div class="w-8 h-8 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-full flex items-center justify-center flex-shrink-0">
@@ -148,7 +151,7 @@
                 </div>
 
                 <!-- Security Fingerprint -->
-                <div class="bg-yellow-900/30 border-b border-yellow-700 px-4 py-2">
+                <div class="bg-yellow-900/30 border-b border-yellow-700 px-4 py-2 flex-shrink-0">
                     <div class="flex items-center justify-between">
                         <div class="flex items-center gap-2 min-w-0 flex-1">
                             <svg class="w-4 h-4 text-yellow-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>
@@ -158,16 +161,16 @@
                     </div>
                 </div>
 
-                <!-- Messages -->
+                <!-- Messages - This is the scrollable area -->
                 <div id="chatArea" class="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-900"></div>
 
                 <!-- Typing Indicator -->
-                <div id="typingIndicator" class="hidden px-4 py-2 text-xs sm:text-sm text-gray-400 bg-gray-800/50">
+                <div id="typingIndicator" class="hidden px-4 py-2 text-xs sm:text-sm text-gray-400 bg-gray-800/50 flex-shrink-0">
                     <span class="animate-pulse"><span id="typingUsername">Peer</span> is typing...</span>
                 </div>
 
                 <!-- Input -->
-                <div class="border-t border-gray-700 bg-gray-800 p-3 sm:p-4 mobile-safe">
+                <div class="border-t border-gray-700 bg-gray-800 p-3 sm:p-4 mobile-safe flex-shrink-0">
                     <div class="flex gap-2 sm:gap-3">
                         <input type="file" id="fileInput" class="hidden" onchange="handleFileSelect(event)">
                         <button onclick="document.getElementById('fileInput').click()" class="px-3 sm:px-4 py-2 sm:py-3 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition">
@@ -219,6 +222,16 @@
             </div>
         </div>
 
+        <!-- Edit Message Modal -->
+        <div id="editModal" class="hidden bg-gray-800 border border-gray-700 rounded-lg max-w-md w-full p-6 animate-slideUp" onclick="event.stopPropagation()">
+            <h3 class="text-xl font-bold text-white mb-4">Edit Message</h3>
+            <textarea id="editTextarea" class="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-sm resize-none" rows="4"></textarea>
+            <div class="flex gap-3 mt-4">
+                <button onclick="saveEditedMessage()" class="flex-1 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg transition">Save</button>
+                <button onclick="closeAllModals()" class="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-lg transition">Cancel</button>
+            </div>
+        </div>
+
         <!-- Notification Modal -->
         <div id="notificationModal" class="hidden bg-gray-800 border border-gray-700 rounded-lg max-w-md w-full p-6 animate-slideUp" onclick="event.stopPropagation()">
             <h3 class="text-xl font-bold text-white mb-4" id="notifTitle">Notice</h3>
@@ -246,14 +259,17 @@
 
         let room, sendEncrypted, getEncrypted, sendTyping, getTyping, sendUserInfo, getUserInfo, sendKey, getKey;
         let sendFileChunk, getFileChunk, sendFileInit, getFileInit;
+        let sendMessageAction, getMessageAction;
         let myKeyPair, peerPublicKey, sharedSecret;
         let sessionId, myUsername, peerUsername;
         let typingTimeout;
         let isConnected = false;
         let fileTransfers = {};
+        let messages = new Map();
+        let currentEditingMessageId = null;
 
-        const CHUNK_SIZE = 256 * 1024; // 256KB chunks
-        const MAX_FILE_SIZE = 1024 * 1024 * 1024; // 1GB
+        const CHUNK_SIZE = 256 * 1024;
+        const MAX_FILE_SIZE = 1024 * 1024 * 1024;
 
         const adjectives = ['Swift', 'Brave', 'Quiet', 'Clever', 'Bold', 'Wise', 'Silent', 'Noble', 'Cosmic', 'Mystic', 'Stellar', 'Lunar', 'Solar', 'Arctic', 'Crimson', 'Azure', 'Emerald', 'Golden', 'Silver', 'Crystal'];
         const nouns = ['Fox', 'Wolf', 'Eagle', 'Tiger', 'Dragon', 'Phoenix', 'Falcon', 'Hawk', 'Lion', 'Panther', 'Raven', 'Serpent', 'Bear', 'Owl', 'Lynx', 'Cobra', 'Viper', 'Shark', 'Dolphin', 'Whale'];
@@ -269,6 +285,65 @@
             const array = new Uint8Array(16);
             crypto.getRandomValues(array);
             return Array.from(array, b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        function generateMessageId() {
+            return Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        }
+
+        // Session persistence
+        function saveSession() {
+            const sessionData = {
+                sessionId,
+                myUsername,
+                timestamp: Date.now()
+            };
+            localStorage.setItem('xsukax_session', JSON.stringify(sessionData));
+        }
+
+        function loadSession() {
+            const saved = localStorage.getItem('xsukax_session');
+            if (!saved) return null;
+            
+            const data = JSON.parse(saved);
+            const hoursSinceLastUse = (Date.now() - data.timestamp) / (1000 * 60 * 60);
+            
+            if (hoursSinceLastUse > 24) {
+                localStorage.removeItem('xsukax_session');
+                return null;
+            }
+            
+            return data;
+        }
+
+        function clearSession() {
+            localStorage.removeItem('xsukax_session');
+        }
+
+        // Check for existing session on load
+        window.addEventListener('DOMContentLoaded', async () => {
+            const saved = loadSession();
+            if (saved) {
+                sessionId = saved.sessionId;
+                myUsername = saved.myUsername;
+                await reconnectSession();
+            }
+        });
+
+        async function reconnectSession() {
+            showLoading('Reconnecting to session...');
+            await generateKeyPair();
+
+            const config = {appId: 'xsukax-lan-chat-v1'};
+            room = joinRoom(config, sessionId);
+
+            setupActions();
+            setupEventHandlers();
+
+            document.getElementById('myUsername').textContent = myUsername;
+            document.getElementById('myInitial').textContent = myUsername.charAt(0);
+            
+            displaySystemMessage('🔄 Reconnected to session');
         }
 
         function showNotification(title, message) {
@@ -318,6 +393,8 @@
             document.getElementById('endSessionModal').classList.add('hidden');
             document.getElementById('notificationModal').classList.add('hidden');
             document.getElementById('loadingModal').classList.add('hidden');
+            document.getElementById('editModal').classList.add('hidden');
+            currentEditingMessageId = null;
         };
 
         window.createSession = async function() {
@@ -338,6 +415,8 @@
             document.getElementById('connectionDisplay').classList.remove('hidden');
             document.getElementById('myUsername').textContent = myUsername;
             document.getElementById('myInitial').textContent = myUsername.charAt(0);
+
+            saveSession();
         };
 
         window.showJoinForm = function() {
@@ -374,6 +453,8 @@
 
             document.getElementById('myUsername').textContent = myUsername;
             document.getElementById('myInitial').textContent = myUsername.charAt(0);
+
+            saveSession();
         };
 
         function setupActions() {
@@ -383,6 +464,7 @@
             [sendKey, getKey] = room.makeAction('key');
             [sendFileInit, getFileInit] = room.makeAction('fileinit');
             [sendFileChunk, getFileChunk] = room.makeAction('filechunk');
+            [sendMessageAction, getMessageAction] = room.makeAction('msgaction');
 
             getKey(async (data, peerId) => {
                 if (peerPublicKey) return;
@@ -403,7 +485,39 @@
 
             getEncrypted(async (data, peerId) => {
                 const decrypted = await decryptMessage(data.encrypted, data.iv);
-                displayMessage(peerUsername || 'Peer', decrypted, false);
+                const messageData = JSON.parse(decrypted);
+                
+                messages.set(messageData.id, {
+                    id: messageData.id,
+                    text: messageData.text,
+                    username: peerUsername || 'Peer',
+                    timestamp: messageData.timestamp,
+                    isOwn: false,
+                    isEdited: false,
+                    isDeleted: false
+                });
+                
+                renderMessage(messageData.id);
+            });
+
+            getMessageAction(async (data) => {
+                const decrypted = await decryptMessage(data.encrypted, data.iv);
+                const action = JSON.parse(decrypted);
+                
+                if (action.action === 'edit') {
+                    const msg = messages.get(action.messageId);
+                    if (msg) {
+                        msg.text = action.newText;
+                        msg.isEdited = true;
+                        updateMessageInDOM(action.messageId);
+                    }
+                } else if (action.action === 'delete') {
+                    const msg = messages.get(action.messageId);
+                    if (msg) {
+                        msg.isDeleted = true;
+                        updateMessageInDOM(action.messageId);
+                    }
+                }
             });
 
             getTyping(() => {
@@ -432,12 +546,10 @@
                 const decrypted = await decryptChunk(data.chunk, data.iv);
                 transfer.chunks[data.chunkIndex] = decrypted;
                 transfer.receivedChunks++;
-
-                const progress = (transfer.receivedChunks / transfer.totalChunks) * 100;
                 
                 if (transfer.receivedChunks === transfer.totalChunks) {
                     const blob = new Blob(transfer.chunks, {type: transfer.type});
-                    displayFileMessage(peerUsername || 'Peer', transfer.name, transfer.type, transfer.size, blob, false);
+                    displayFileMessage(peerUsername || 'Peer', transfer.name, transfer.type, transfer.size, blob, false, data.messageId);
                     delete fileTransfers[data.fileId];
                 }
             });
@@ -455,8 +567,7 @@
             });
 
             room.onPeerLeave(() => {
-                displaySystemMessage('Peer disconnected. Session ended.');
-                setTimeout(() => location.reload(), 3000);
+                displaySystemMessage('Peer disconnected. Waiting for reconnection...');
             });
         }
 
@@ -586,9 +697,27 @@
             const text = input.value.trim();
             if (!text || !sharedSecret) return;
 
-            const encrypted = await encryptMessage(text);
+            const messageId = generateMessageId();
+            const messageData = {
+                id: messageId,
+                text: text,
+                timestamp: Date.now()
+            };
+
+            const encrypted = await encryptMessage(JSON.stringify(messageData));
             sendEncrypted(encrypted);
-            displayMessage(myUsername, text, true);
+
+            messages.set(messageId, {
+                id: messageId,
+                text: text,
+                username: myUsername,
+                timestamp: messageData.timestamp,
+                isOwn: true,
+                isEdited: false,
+                isDeleted: false
+            });
+
+            renderMessage(messageId);
             input.value = '';
         };
 
@@ -620,6 +749,7 @@
 
         async function sendFile(file) {
             const fileId = generateSessionId();
+            const messageId = generateMessageId();
             const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
             sendFileInit({
@@ -627,7 +757,8 @@
                 name: file.name,
                 type: file.type,
                 size: file.size,
-                totalChunks: totalChunks
+                totalChunks: totalChunks,
+                messageId: messageId
             });
 
             showLoading(`Sending ${file.name}...`, true);
@@ -642,46 +773,132 @@
                     fileId: fileId,
                     chunkIndex: i,
                     chunk: encrypted.chunk,
-                    iv: encrypted.iv
+                    iv: encrypted.iv,
+                    messageId: messageId
                 });
 
                 const progress = ((i + 1) / totalChunks) * 100;
                 updateProgress(progress);
 
-                // Small delay to prevent overwhelming
                 await new Promise(resolve => setTimeout(resolve, 10));
             }
 
             hideLoading();
 
-            // Create blob for own display
             const blob = new Blob([await file.arrayBuffer()], {type: file.type});
-            displayFileMessage(myUsername, file.name, file.type, file.size, blob, true);
+            displayFileMessage(myUsername, file.name, file.type, file.size, blob, true, messageId);
         }
 
-        function displayMessage(username, text, isOwn) {
+        function renderMessage(messageId) {
+            const msg = messages.get(messageId);
+            if (!msg) return;
+
             const chatArea = document.getElementById('chatArea');
-            const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+            const time = new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
             
             const messageDiv = document.createElement('div');
-            messageDiv.className = `flex ${isOwn ? 'justify-end' : 'justify-start'} animate-slideUp`;
-            messageDiv.innerHTML = `
-                <div class="chat-message ${isOwn ? 'bg-gradient-to-r from-purple-600 to-pink-600' : 'bg-gray-700'} rounded-lg px-3 sm:px-4 py-2 shadow-lg">
-                    <p class="text-xs font-medium ${isOwn ? 'text-purple-200' : 'text-gray-400'} mb-1">${escapeHtml(username)}</p>
-                    <p class="text-sm text-white break-words">${escapeHtml(text)}</p>
-                    <span class="text-xs ${isOwn ? 'text-purple-200' : 'text-gray-400'} mt-1 block">${time}</span>
-                </div>
-            `;
+            messageDiv.id = `msg-${messageId}`;
+            messageDiv.className = `message-wrapper flex ${msg.isOwn ? 'justify-end' : 'justify-start'} animate-slideUp`;
+            
+            if (msg.isDeleted) {
+                messageDiv.innerHTML = `
+                    <div class="chat-message bg-gray-800 rounded-lg px-3 sm:px-4 py-2 shadow-lg opacity-50">
+                        <p class="text-xs font-medium text-gray-500 mb-1">${escapeHtml(msg.username)}</p>
+                        <p class="text-sm text-gray-500 italic">Message deleted</p>
+                        <span class="text-xs text-gray-500 mt-1 block">${time}</span>
+                    </div>
+                `;
+            } else {
+                messageDiv.innerHTML = `
+                    <div class="chat-message ${msg.isOwn ? 'bg-gradient-to-r from-purple-600 to-pink-600' : 'bg-gray-700'} rounded-lg px-3 sm:px-4 py-2 shadow-lg">
+                        <p class="text-xs font-medium ${msg.isOwn ? 'text-purple-200' : 'text-gray-400'} mb-1">${escapeHtml(msg.username)}</p>
+                        <p class="text-sm text-white break-words">${escapeHtml(msg.text)}</p>
+                        ${msg.isEdited ? `<p class="text-xs ${msg.isOwn ? 'text-purple-200' : 'text-gray-400'} message-edited mt-1">(edited)</p>` : ''}
+                        <span class="text-xs ${msg.isOwn ? 'text-purple-200' : 'text-gray-400'} mt-1 block">${time}</span>
+                        ${msg.isOwn ? `
+                            <div class="message-actions flex gap-2 mt-2">
+                                <button onclick="editMessage('${messageId}')" class="px-2 py-1 bg-white/20 hover:bg-white/30 text-white text-xs rounded transition">Edit</button>
+                                <button onclick="deleteMessage('${messageId}')" class="px-2 py-1 bg-red-500/20 hover:bg-red-500/30 text-white text-xs rounded transition">Delete</button>
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }
+            
             chatArea.appendChild(messageDiv);
+            scrollToBottom();
+        }
+
+        function updateMessageInDOM(messageId) {
+            const existingMsg = document.getElementById(`msg-${messageId}`);
+            if (existingMsg) {
+                existingMsg.remove();
+            }
+            renderMessage(messageId);
+        }
+
+        function scrollToBottom() {
+            const chatArea = document.getElementById('chatArea');
             chatArea.scrollTop = chatArea.scrollHeight;
         }
 
-        function displayFileMessage(username, fileName, fileType, fileSize, blob, isOwn) {
+        window.editMessage = function(messageId) {
+            const msg = messages.get(messageId);
+            if (!msg || msg.isDeleted) return;
+
+            currentEditingMessageId = messageId;
+            document.getElementById('editTextarea').value = msg.text;
+            document.getElementById('modalBackdrop').classList.remove('hidden');
+            document.getElementById('editModal').classList.remove('hidden');
+        };
+
+        window.saveEditedMessage = async function() {
+            if (!currentEditingMessageId) return;
+
+            const newText = document.getElementById('editTextarea').value.trim();
+            if (!newText) return;
+
+            const msg = messages.get(currentEditingMessageId);
+            msg.text = newText;
+            msg.isEdited = true;
+
+            const action = {
+                action: 'edit',
+                messageId: currentEditingMessageId,
+                newText: newText
+            };
+
+            const encrypted = await encryptMessage(JSON.stringify(action));
+            sendMessageAction(encrypted);
+
+            updateMessageInDOM(currentEditingMessageId);
+            closeAllModals();
+        };
+
+        window.deleteMessage = async function(messageId) {
+            const msg = messages.get(messageId);
+            if (!msg) return;
+
+            msg.isDeleted = true;
+
+            const action = {
+                action: 'delete',
+                messageId: messageId
+            };
+
+            const encrypted = await encryptMessage(JSON.stringify(action));
+            sendMessageAction(encrypted);
+
+            updateMessageInDOM(messageId);
+        };
+
+        function displayFileMessage(username, fileName, fileType, fileSize, blob, isOwn, messageId) {
             const chatArea = document.getElementById('chatArea');
             const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
             const url = URL.createObjectURL(blob);
             
             const messageDiv = document.createElement('div');
+            messageDiv.id = messageId ? `msg-${messageId}` : '';
             messageDiv.className = `flex ${isOwn ? 'justify-end' : 'justify-start'} animate-slideUp`;
             
             let previewHtml = '';
@@ -708,7 +925,7 @@
                 </div>
             `;
             chatArea.appendChild(messageDiv);
-            chatArea.scrollTop = chatArea.scrollHeight;
+            scrollToBottom();
         }
 
         function displaySystemMessage(text) {
@@ -721,7 +938,7 @@
                 </div>
             `;
             chatArea.appendChild(messageDiv);
-            chatArea.scrollTop = chatArea.scrollHeight;
+            scrollToBottom();
         }
 
         function formatFileSize(bytes) {
@@ -740,6 +957,7 @@
 
         window.endSession = function() {
             if (room) room.leave();
+            clearSession();
             location.reload();
         };
 
@@ -750,7 +968,9 @@
         }
 
         window.addEventListener('beforeunload', () => {
-            if (room) room.leave();
+            if (room) {
+                saveSession();
+            }
         });
     </script>
 </body>
