@@ -8,7 +8,12 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+        html, body { 
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            overflow: hidden;
+            height: 100%;
+            width: 100%;
+        }
         .fingerprint { font-family: 'Courier New', monospace; letter-spacing: 2px; }
         .modal-backdrop { backdrop-filter: blur(4px); }
         @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
@@ -23,10 +28,29 @@
         .message-actions { opacity: 0; transition: opacity 0.2s; }
         .message-wrapper:hover .message-actions { opacity: 1; }
         .message-edited { font-style: italic; opacity: 0.8; }
+        
+        /* Custom scrollbar for chat area */
+        #chatArea::-webkit-scrollbar,
+        #setupArea::-webkit-scrollbar {
+            width: 8px;
+        }
+        #chatArea::-webkit-scrollbar-track,
+        #setupArea::-webkit-scrollbar-track {
+            background: #1f2937;
+        }
+        #chatArea::-webkit-scrollbar-thumb,
+        #setupArea::-webkit-scrollbar-thumb {
+            background: #4b5563;
+            border-radius: 4px;
+        }
+        #chatArea::-webkit-scrollbar-thumb:hover,
+        #setupArea::-webkit-scrollbar-thumb:hover {
+            background: #6b7280;
+        }
     </style>
 </head>
-<body class="bg-gray-900 min-h-screen">
-    <div class="min-h-screen flex flex-col max-w-6xl mx-auto">
+<body class="bg-gray-900 h-screen">
+    <div class="h-full flex flex-col max-w-6xl mx-auto overflow-hidden">
         <!-- Header -->
         <div class="bg-gray-800 border-b border-gray-700 px-4 sm:px-6 py-4 sticky top-0 z-10">
             <div class="flex items-center justify-between">
@@ -47,9 +71,9 @@
         </div>
 
         <!-- Main Content -->
-        <div class="flex-1 flex flex-col overflow-hidden">
+        <div class="flex-1 flex flex-col overflow-hidden min-h-0">
             <!-- Setup Screen -->
-            <div id="setupArea" class="flex-1 overflow-y-auto p-4 sm:p-8">
+            <div id="setupArea" class="flex-1 overflow-y-auto p-4 sm:p-8 min-h-0">
                 <div class="max-w-2xl mx-auto">
                     <div class="text-center mb-8">
                         <div class="w-16 sm:w-20 h-16 sm:h-20 bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
@@ -185,7 +209,7 @@
                 </div>
 
                 <!-- Messages -->
-                <div id="chatArea" class="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-900"></div>
+                <div id="chatArea" class="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-900 min-h-0"></div>
 
                 <!-- Typing Indicator -->
                 <div id="typingIndicator" class="hidden px-4 py-2 text-xs sm:text-sm text-gray-400 bg-gray-800/50 flex-shrink-0">
