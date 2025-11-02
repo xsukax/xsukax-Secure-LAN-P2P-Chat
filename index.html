@@ -284,12 +284,13 @@
         let myUsername, peerUsername;
         let typingTimeout;
         let isConnected = false;
+        let isDataChannelOpen = false;
         let messages = new Map();
         let currentEditingMessageId = null;
         let fileTransfers = {};
-        let isHost = false;
+        let pendingMessages = [];
 
-        const CHUNK_SIZE = 256 * 1024;
+        const CHUNK_SIZE = 64 * 1024; // Reduced to 64KB for better reliability
         const MAX_FILE_SIZE = 1024 * 1024 * 1024;
 
         const adjectives = ['Swift', 'Brave', 'Quiet', 'Clever', 'Bold', 'Wise', 'Silent', 'Noble', 'Cosmic', 'Mystic'];
@@ -357,8 +358,21 @@
             currentEditingMessageId = null;
         };
 
+        function sendData(data) {
+            if (!dataChannel || dataChannel.readyState !== 'open') {
+                console.error('Data channel not ready');
+                return false;
+            }
+            try {
+                dataChannel.send(JSON.stringify(data));
+                return true;
+            } catch (e) {
+                console.error('Failed to send data:', e);
+                return false;
+            }
+        }
+
         window.createSession = async function() {
-            isHost = true;
             myUsername = generateUsername();
             showLoading('Creating connection offer...');
 
@@ -377,7 +391,9 @@
             peerConnection = new RTCPeerConnection(config);
 
             if (createOffer) {
-                dataChannel = peerConnection.createDataChannel('xsukax-chat');
+                dataChannel = peerConnection.createDataChannel('xsukax-chat', {
+                    ordered: true
+                });
                 setupDataChannel(dataChannel);
             } else {
                 peerConnection.ondatachannel = (event) => {
@@ -417,11 +433,14 @@
             };
 
             peerConnection.onconnectionstatechange = () => {
+                console.log('Connection state:', peerConnection.connectionState);
                 if (peerConnection.connectionState === 'connected') {
                     displaySystemMessage('🔗 P2P Connection established');
                 } else if (peerConnection.connectionState === 'disconnected') {
+                    isDataChannelOpen = false;
                     displaySystemMessage('⚠️ Connection lost');
                 } else if (peerConnection.connectionState === 'failed') {
+                    isDataChannelOpen = false;
                     showNotification('Connection Failed', 'Unable to establish P2P connection. Try again.');
                 }
             };
@@ -434,9 +453,28 @@
 
         function setupDataChannel(channel) {
             channel.onopen = async () => {
+                console.log('Data channel opened');
+                isDataChannelOpen = true;
+                
                 if (peerPublicKey) {
                     await deriveSharedSecret();
                 }
+                
+                // Send pending messages
+                while (pendingMessages.length > 0) {
+                    const msg = pendingMessages.shift();
+                    sendData(msg);
+                }
+            };
+
+            channel.onclose = () => {
+                console.log('Data channel closed');
+                isDataChannelOpen = false;
+            };
+
+            channel.onerror = (error) => {
+                console.error('Data channel error:', error);
+                isDataChannelOpen = false;
             };
 
             channel.onmessage = async (event) => {
@@ -444,7 +482,9 @@
 
                 if (data.type === 'publicKey') {
                     peerPublicKey = await importPublicKey(data.key);
-                    await deriveSharedSecret();
+                    if (isDataChannelOpen) {
+                        await deriveSharedSecret();
+                    }
                     
                 } else if (data.type === 'username') {
                     peerUsername = data.username;
@@ -641,15 +681,22 @@
             showChatInterface();
             
             const exported = await crypto.subtle.exportKey('raw', myKeyPair.publicKey);
-            dataChannel.send(JSON.stringify({
+            const keyData = {
                 type: 'publicKey',
                 key: Array.from(new Uint8Array(exported))
-            }));
+            };
             
-            dataChannel.send(JSON.stringify({
+            const usernameData = {
                 type: 'username',
                 username: myUsername
-            }));
+            };
+            
+            if (isDataChannelOpen) {
+                sendData(keyData);
+                sendData(usernameData);
+            } else {
+                pendingMessages.push(keyData, usernameData);
+            }
         }
 
         async function generateFingerprint(keyMaterial) {
@@ -730,7 +777,12 @@
         window.sendMessage = async function() {
             const input = document.getElementById('messageInput');
             const text = input.value.trim();
-            if (!text || !sharedSecret || !dataChannel) return;
+            if (!text || !sharedSecret) return;
+
+            if (!isDataChannelOpen) {
+                showNotification('Error', 'Connection not ready. Please wait.');
+                return;
+            }
 
             const messageId = generateMessageId();
             const messageData = {
@@ -741,30 +793,34 @@
 
             const encrypted = await encryptMessage(JSON.stringify(messageData));
             
-            dataChannel.send(JSON.stringify({
+            const success = sendData({
                 type: 'message',
                 encrypted: encrypted.encrypted,
                 iv: encrypted.iv
-            }));
-
-            messages.set(messageId, {
-                id: messageId,
-                text: text,
-                username: myUsername,
-                timestamp: messageData.timestamp,
-                isOwn: true,
-                isEdited: false,
-                isDeleted: false
             });
 
-            renderMessage(messageId);
-            input.value = '';
+            if (success) {
+                messages.set(messageId, {
+                    id: messageId,
+                    text: text,
+                    username: myUsername,
+                    timestamp: messageData.timestamp,
+                    isOwn: true,
+                    isEdited: false,
+                    isDeleted: false
+                });
+
+                renderMessage(messageId);
+                input.value = '';
+            } else {
+                showNotification('Error', 'Failed to send message. Connection may be lost.');
+            }
         };
 
         window.onTyping = function() {
-            if (dataChannel && dataChannel.readyState === 'open') {
+            if (isDataChannelOpen) {
                 clearTimeout(typingTimeout);
-                dataChannel.send(JSON.stringify({type: 'typing'}));
+                sendData({type: 'typing'});
                 typingTimeout = setTimeout(() => {}, 1000);
             }
         };
@@ -778,8 +834,13 @@
                 return;
             }
 
-            if (!sharedSecret || !dataChannel) {
+            if (!sharedSecret) {
                 showNotification('Error', 'Connection not established yet.');
+                return;
+            }
+
+            if (!isDataChannelOpen) {
+                showNotification('Error', 'Connection not ready. Please wait.');
                 return;
             }
 
@@ -792,7 +853,7 @@
             const messageId = generateMessageId();
             const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
-            dataChannel.send(JSON.stringify({
+            const initSuccess = sendData({
                 type: 'fileInit',
                 fileId: fileId,
                 name: file.name,
@@ -800,7 +861,12 @@
                 size: file.size,
                 totalChunks: totalChunks,
                 messageId: messageId
-            }));
+            });
+
+            if (!initSuccess) {
+                showNotification('Error', 'Failed to initiate file transfer.');
+                return;
+            }
 
             showLoading(`Sending ${file.name}...`, true);
 
@@ -811,19 +877,25 @@
                 
                 const encrypted = await encryptChunk(chunk);
                 
-                dataChannel.send(JSON.stringify({
+                const success = sendData({
                     type: 'fileChunk',
                     fileId: fileId,
                     chunkIndex: i,
                     chunk: encrypted.chunk,
                     iv: encrypted.iv,
                     messageId: messageId
-                }));
+                });
+
+                if (!success) {
+                    hideLoading();
+                    showNotification('Error', 'File transfer interrupted. Connection lost.');
+                    return;
+                }
 
                 const progress = ((i + 1) / totalChunks) * 100;
                 updateProgress(progress);
 
-                await new Promise(resolve => setTimeout(resolve, 10));
+                await new Promise(resolve => setTimeout(resolve, 20));
             }
 
             hideLoading();
@@ -896,7 +968,7 @@
         };
 
         window.saveEditedMessage = async function() {
-            if (!currentEditingMessageId) return;
+            if (!currentEditingMessageId || !isDataChannelOpen) return;
 
             const newText = document.getElementById('editTextarea').value.trim();
             if (!newText) return;
@@ -913,17 +985,19 @@
 
             const encrypted = await encryptMessage(JSON.stringify(action));
             
-            dataChannel.send(JSON.stringify({
+            sendData({
                 type: 'action',
                 encrypted: encrypted.encrypted,
                 iv: encrypted.iv
-            }));
+            });
 
             updateMessageInDOM(currentEditingMessageId);
             closeAllModals();
         };
 
         window.deleteMessage = async function(messageId) {
+            if (!isDataChannelOpen) return;
+            
             const msg = messages.get(messageId);
             if (!msg) return;
 
@@ -936,11 +1010,11 @@
 
             const encrypted = await encryptMessage(JSON.stringify(action));
             
-            dataChannel.send(JSON.stringify({
+            sendData({
                 type: 'action',
                 encrypted: encrypted.encrypted,
                 iv: encrypted.iv
-            }));
+            });
 
             updateMessageInDOM(messageId);
         };
